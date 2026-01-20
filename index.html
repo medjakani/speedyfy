@@ -3,139 +3,122 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Network Utility</title>
+  <title>Public Phone Vault</title>
   <link rel="stylesheet" href="css/app.css" />
 </head>
 
 <body>
-  <!-- Matrix background canvas -->
   <canvas id="matrix"></canvas>
 
   <div class="wrap">
     <header class="top">
       <div class="brand">
-        <div class="badge">NET • UTILITY</div>
-        <div class="title">NETWORK DIAGNOSTICS</div>
-        <div class="sub" id="subLine">Ready</div>
+        <div class="badge">PUBLIC PHONE VAULT</div>
+        <div class="title">Shareable Phone Number Access</div>
+        <div class="sub" id="subLine">Store contacts you can access from any device.</div>
       </div>
 
       <div class="topRight">
-        <div class="chip" id="onlineChip">ONLINE</div>
-        <div class="chip dim" id="connChip">conn: —</div>
+        <div class="chip" id="storageChip">LOCAL STORAGE</div>
+        <div class="chip dim" id="publicChip">public: 0</div>
       </div>
     </header>
 
     <main class="panel">
       <section class="left">
         <div class="box">
-          <div class="boxTitle">SPEED TEST</div>
+          <div class="boxTitle">ADD A PHONE NUMBER</div>
           <div class="boxHint">
-            Measures real download speed by downloading a test file. If a server blocks requests, it will auto-fallback.
+            Save important numbers and mark which ones are safe to show on the public board if your phone is lost.
           </div>
 
-          <div class="controls">
-            <button class="btn primary" id="btnQuick" type="button">
-              RUN QUICK
-              <span class="btnSub">~10MB</span>
-            </button>
-
-            <button class="btn" id="btnDeep" type="button">
-              RUN DEEP
-              <span class="btnSub">~50MB</span>
-            </button>
-
-            <button class="btn ghost" id="btnStop" type="button" disabled>
-              STOP
-              <span class="btnSub">cancel</span>
-            </button>
-          </div>
-
-          <div class="meter">
-            <div class="meterRow">
-              <div class="label">Latency</div>
-              <div class="value"><span id="latency">—</span> <span class="unit">ms</span></div>
+          <form class="form" id="entryForm">
+            <div class="field">
+              <label for="name">Contact name</label>
+              <input id="name" name="name" type="text" placeholder="Mom, Dr. Patel, Work" required />
             </div>
-            <div class="meterRow">
-              <div class="label">Download</div>
-              <div class="value big"><span id="dl">—</span> <span class="unit">Mbps</span></div>
+            <div class="field">
+              <label for="phone">Phone number</label>
+              <input id="phone" name="phone" type="tel" placeholder="+1 (555) 222-1010" required />
             </div>
-            <div class="meterRow">
-              <div class="label">Status</div>
-              <div class="value"><span id="status">Idle</span></div>
+            <div class="field">
+              <label for="label">Label</label>
+              <input id="label" name="label" type="text" placeholder="Emergency, Primary, Backup" />
+            </div>
+            <div class="field">
+              <label for="notes">Notes (optional)</label>
+              <textarea id="notes" name="notes" rows="3" placeholder="How to verify me, best hours, etc."></textarea>
+            </div>
+            <div class="field inline">
+              <input id="isPublic" name="isPublic" type="checkbox" />
+              <label for="isPublic">Show on public access board</label>
+            </div>
+
+            <div class="controls">
+              <button class="btn primary" id="btnSave" type="submit">
+                SAVE NUMBER
+                <span class="btnSub">stored locally</span>
+              </button>
+              <button class="btn" id="btnReset" type="button">
+                RESET FORM
+                <span class="btnSub">clear fields</span>
+              </button>
+            </div>
+          </form>
+
+          <div class="divider"></div>
+
+          <div class="listHeader">
+            <div>
+              <div class="boxTitle">SAVED NUMBERS</div>
+              <div class="boxHint" id="countLabel">0 entries saved</div>
+            </div>
+            <div class="filters">
+              <button class="pill active" data-filter="all" type="button">All</button>
+              <button class="pill" data-filter="public" type="button">Public</button>
             </div>
           </div>
 
-          <div class="barWrap">
-            <div class="bar"><div class="barFill" id="barFill"></div></div>
-            <div class="barText" id="barText">Idle</div>
-          </div>
-
-          <div class="miniRow">
-            <div class="miniTitle">Endpoint</div>
-            <div class="miniValue" id="endpoint">auto</div>
-          </div>
-
-          <div class="miniRow">
-            <div class="miniTitle">Last results</div>
-            <button class="miniBtn" id="btnClear" type="button">CLEAR</button>
-          </div>
-
-          <div class="results" id="results"></div>
+          <div class="list" id="entryList"></div>
         </div>
       </section>
 
       <section class="right">
         <div class="box">
-          <div class="boxTitle">USEFUL INFO</div>
-          <div class="boxHint">Quick diagnostics shown from the device and browser capabilities.</div>
-
-          <div class="infoGrid">
-            <div class="infoItem">
-              <div class="k">Online</div>
-              <div class="v" id="iOnline">—</div>
-            </div>
-            <div class="infoItem">
-              <div class="k">Connection Type</div>
-              <div class="v" id="iType">—</div>
-            </div>
-            <div class="infoItem">
-              <div class="k">Downlink (est.)</div>
-              <div class="v" id="iDown">—</div>
-            </div>
-            <div class="infoItem">
-              <div class="k">RTT (est.)</div>
-              <div class="v" id="iRtt">—</div>
-            </div>
-            <div class="infoItem">
-              <div class="k">Data Saver</div>
-              <div class="v" id="iSave">—</div>
-            </div>
-            <div class="infoItem">
-              <div class="k">User Agent</div>
-              <div class="v small" id="iUA">—</div>
-            </div>
+          <div class="boxTitle">PUBLIC ACCESS BOARD</div>
+          <div class="boxHint">
+            These numbers are safe to display publicly. Use this panel from any device when you lose your phone.
           </div>
 
-          <div class="toast" id="toast">Tip: Use arrows + OK. Focus is highlighted.</div>
+          <div class="publicBoard" id="publicBoard"></div>
 
-          <div class="shortcutBox">
-            <div class="boxTitle">QUICK SHORTCUTS (UI)</div>
-            <div class="boxHint">Preview-only buttons for now (we can wire real settings later).</div>
-            <div class="shortGrid">
-              <button class="tile" data-name="Wi-Fi" type="button">Wi-Fi</button>
-              <button class="tile" data-name="Bluetooth" type="button">Bluetooth</button>
-              <button class="tile" data-name="Display" type="button">Display</button>
-              <button class="tile" data-name="Apps" type="button">Apps</button>
-              <button class="tile" data-name="About" type="button">About</button>
-            </div>
+          <div class="shareBox">
+            <div class="k">Shareable text</div>
+            <textarea id="publicExport" rows="4" readonly></textarea>
+            <button class="btn ghost" id="btnCopy" type="button">
+              COPY PUBLIC TEXT
+              <span class="btnSub">paste anywhere</span>
+            </button>
+          </div>
+
+          <div class="toast" id="toast">Add entries to build your public access list.</div>
+
+          <div class="checklist">
+            <div class="boxTitle">SAFETY CHECKLIST</div>
+            <ul>
+              <li>Only mark numbers as public if you are comfortable sharing them.</li>
+              <li>Include a verification note (like a code word) in Notes.</li>
+              <li>Update this list after phone or SIM changes.</li>
+            </ul>
+            <div class="stamp" id="updatedStamp">Last updated: —</div>
           </div>
         </div>
       </section>
     </main>
 
     <footer class="foot">
-      <div>OK: Select • Back: Return</div>
-      <div class="dim">v1.0 • UI+WORKING TEST</div>
+      <div>Use this page as a public reference in emergencies.</div>
+      <div class="dim">v2.0 • PUBLIC PHONE VAULT</div>
     </footer>
   </div>
 

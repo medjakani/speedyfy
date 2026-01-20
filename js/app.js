@@ -1,254 +1,33 @@
 (() => {
   const $ = (id) => document.getElementById(id);
 
-  // UI refs
+  const STORAGE_KEY = 'publicPhoneVaultEntries';
+
   const subLine = $('subLine');
-  const onlineChip = $('onlineChip');
-  const connChip = $('connChip');
-
-  const latencyEl = $('latency');
-  const dlEl = $('dl');
-  const statusEl = $('status');
-  const barFill = $('barFill');
-  const barText = $('barText');
-  const endpointEl = $('endpoint');
-
-  const resultsEl = $('results');
+  const publicChip = $('publicChip');
   const toast = $('toast');
+  const updatedStamp = $('updatedStamp');
 
-  const btnQuick = $('btnQuick');
-  const btnDeep = $('btnDeep');
-  const btnStop = $('btnStop');
-  const btnClear = $('btnClear');
+  const entryForm = $('entryForm');
+  const nameInput = $('name');
+  const phoneInput = $('phone');
+  const labelInput = $('label');
+  const notesInput = $('notes');
+  const isPublicInput = $('isPublic');
+  const btnReset = $('btnReset');
 
-  // ====== Endpoints (auto fallback) ======
-  // Some servers block WebView fetch (403/CORS). We try multiple.
-  const ENDPOINTS = {
-    quick: [
-      { name: 'TransIP 10MB', url: 'https://speed.transip.nl/10mb.bin', mbHint: 10 },
-      { name: 'nforce 10MB', url: 'https://mirror.nforce.com/pub/speedtests/10mb.bin', mbHint: 10 }
-    ],
-    deep: [
-      { name: 'nforce 50MB', url: 'https://mirror.nforce.com/pub/speedtests/50mb.bin', mbHint: 50 },
-      { name: 'TransIP 10MB (fallback)', url: 'https://speed.transip.nl/10mb.bin', mbHint: 10 }
-    ]
-  };
+  const entryList = $('entryList');
+  const publicBoard = $('publicBoard');
+  const publicExport = $('publicExport');
+  const btnCopy = $('btnCopy');
+  const countLabel = $('countLabel');
 
-  let abortCtrl = null;
-  let running = false;
-  let runs = []; // {when, name, mb, latencyMs, mbps, seconds}
+  const filterButtons = document.querySelectorAll('[data-filter]');
 
-  // ====== Helpers ======
-  function fmt(n, d = 1) {
-    if (!Number.isFinite(n)) return '—';
-    return n.toFixed(d);
-  }
+  let entries = [];
+  let editingId = null;
+  let activeFilter = 'all';
 
-  function setBar(pct, text) {
-    const p = Math.max(0, Math.min(100, pct));
-    barFill.style.width = `${p}%`;
-    barText.textContent = text;
-  }
-
-  function toastMsg(msg) {
-    toast.textContent = msg;
-  }
-
-  function setOnlineUI(isOnline) {
-    onlineChip.textContent = isOnline ? 'ONLINE' : 'OFFLINE';
-    onlineChip.style.color = isOnline ? 'var(--g)' : 'var(--warn)';
-    subLine.textContent = isOnline ? 'Ready' : 'Offline';
-  }
-
-  function connInfo() {
-    const c = navigator.connection;
-    if (!c) return { type: 'unknown', downlink: null, rtt: null, saveData: null };
-    return {
-      type: c.type || c.effectiveType || 'unknown',
-      downlink: c.downlink,
-      rtt: c.rtt,
-      saveData: c.saveData
-    };
-  }
-
-  function updateConnUI() {
-    const c = connInfo();
-    connChip.textContent = `conn: ${c.type}`;
-    $('iOnline').textContent = navigator.onLine ? 'Yes' : 'No';
-    $('iType').textContent = c.type ?? '—';
-    $('iDown').textContent = (c.downlink != null) ? `${c.downlink} Mbps` : '—';
-    $('iRtt').textContent = (c.rtt != null) ? `${c.rtt} ms` : '—';
-    $('iSave').textContent = (c.saveData != null) ? (c.saveData ? 'On' : 'Off') : '—';
-    $('iUA').textContent = navigator.userAgent || '—';
-  }
-
-  function renderResults() {
-    resultsEl.innerHTML = runs.slice().reverse().slice(0, 6).map(r => {
-      const t = new Date(r.when).toLocaleTimeString();
-      return `
-        <div class="result">
-          <div class="resultTop"><span>${r.name}</span><span>${t}</span></div>
-          <div class="resultMid">${fmt(r.mbps)} Mbps</div>
-          <div class="resultBot">${r.mb} MB • ${fmt(r.seconds, 2)}s • ${Math.round(r.latencyMs)}ms</div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  // ====== Real measurement ======
-  // Latency: fetch first byte (TTFB-ish) using a small request (Range if supported).
-  async function measureLatency(urlBase) {
-    const cb = `cb=${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const url = urlBase.includes('?') ? `${urlBase}&${cb}` : `${urlBase}?${cb}`;
-
-    const t0 = performance.now();
-    const res = await fetch(url, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: abortCtrl.signal,
-      headers: {
-        // Try to request a tiny chunk. Some servers ignore Range (still OK).
-        'Range': 'bytes=0-99999'
-      }
-    });
-    if (!res.ok && res.status !== 206) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    // We only need it to start; but fetch resolves when headers arrive.
-    const t1 = performance.now();
-
-    // Cancel body quickly by not reading it fully (best effort).
-    try { res.body?.cancel(); } catch {}
-
-    return (t1 - t0);
-  }
-
-  // Download speed: download whole file and compute Mbps.
-  async function measureDownloadMbps(urlBase) {
-    const cb = `cb=${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const url = urlBase.includes('?') ? `${urlBase}&${cb}` : `${urlBase}?${cb}`;
-
-    const t0 = performance.now();
-    const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: abortCtrl.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    // Read the full body to truly download
-    const buf = await res.arrayBuffer();
-
-    const t1 = performance.now();
-    const seconds = (t1 - t0) / 1000;
-    const bytes = buf.byteLength || 1;
-
-    const mbps = (bytes * 8 / (1024 * 1024)) / seconds;
-    return { mbps, seconds, bytes };
-  }
-
-  async function runTest(mode) {
-    if (running) return;
-
-    running = true;
-    btnQuick.disabled = true;
-    btnDeep.disabled = true;
-    btnStop.disabled = false;
-
-    abortCtrl = new AbortController();
-
-    latencyEl.textContent = '—';
-    dlEl.textContent = '—';
-    statusEl.textContent = 'Starting…';
-    endpointEl.textContent = 'auto';
-    setBar(0, 'Initializing…');
-
-    const candidates = ENDPOINTS[mode] || [];
-    let lastErr = null;
-
-    try {
-      subLine.textContent = 'Running…';
-
-      for (let i = 0; i < candidates.length; i++) {
-        const ep = candidates[i];
-        endpointEl.textContent = ep.name;
-
-        try {
-          statusEl.textContent = 'Latency check…';
-          setBar(10, `Latency check: ${ep.name}`);
-          const lat = await measureLatency(ep.url);
-          latencyEl.textContent = String(Math.round(lat));
-
-          statusEl.textContent = 'Downloading…';
-          setBar(35, `Downloading: ${ep.name}`);
-
-          const { mbps, seconds, bytes } = await measureDownloadMbps(ep.url);
-
-          // show result
-          dlEl.textContent = fmt(mbps, 1);
-          statusEl.textContent = 'Done';
-          setBar(100, 'Completed');
-
-          const mb = Math.round(bytes / (1024 * 1024));
-          runs.push({
-            when: Date.now(),
-            name: ep.name,
-            mb: mb || ep.mbHint,
-            latencyMs: lat,
-            mbps,
-            seconds
-          });
-
-          renderResults();
-          toastMsg('Test completed.');
-          return;
-
-        } catch (e) {
-          lastErr = e;
-          // Try next endpoint
-          statusEl.textContent = 'Switching endpoint…';
-          setBar(15, `Blocked/failed. Trying next… (${e?.message || e})`);
-        }
-      }
-
-      // If we got here, everything failed:
-      throw lastErr || new Error('All endpoints failed');
-
-    } catch (e) {
-      if (e?.name === 'AbortError') {
-        statusEl.textContent = 'Stopped';
-        setBar(0, 'Stopped');
-        toastMsg('Stopped.');
-      } else {
-        statusEl.textContent = 'Failed';
-        setBar(0, `Failed: ${e?.message || e}`);
-        toastMsg('Some servers may block device requests. We can switch endpoints or host your own test files.');
-      }
-
-    } finally {
-      running = false;
-      btnQuick.disabled = false;
-      btnDeep.disabled = false;
-      btnStop.disabled = true;
-      abortCtrl = null;
-      subLine.textContent = 'Ready';
-    }
-  }
-
-  function stopNow() {
-    try { abortCtrl?.abort(); } catch {}
-  }
-
-  function clearAll() {
-    stopNow();
-    runs = [];
-    renderResults();
-    latencyEl.textContent = '—';
-    dlEl.textContent = '—';
-    statusEl.textContent = 'Idle';
-    endpointEl.textContent = 'auto';
-    setBar(0, 'Idle');
-    toastMsg('Cleared.');
-  }
-
-  // ====== Matrix background ======
   function startMatrix() {
     const canvas = $('matrix');
     const ctx = canvas.getContext('2d');
@@ -261,14 +40,13 @@
     resize();
     window.addEventListener('resize', resize);
 
-    const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF#@$%';
-    const fontSize = 16;
+    const chars = '0123456789#☎︎•+';
+    const fontSize = 18;
     let columns = Math.floor(window.innerWidth / fontSize);
     let drops = Array.from({ length: columns }, () => Math.random() * 20);
 
     function tick() {
-      // translucent background for trails
-      ctx.fillStyle = 'rgba(2, 6, 4, 0.10)';
+      ctx.fillStyle = 'rgba(7, 9, 15, 0.18)';
       ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
       ctx.font = `${fontSize}px ui-monospace, monospace`;
@@ -277,14 +55,13 @@
         const x = i * fontSize;
         const y = drops[i] * fontSize;
 
-        ctx.fillStyle = 'rgba(57,255,122,0.85)';
+        ctx.fillStyle = 'rgba(96,242,255,0.75)';
         ctx.fillText(text, x, y);
 
-        if (y > window.innerHeight && Math.random() > 0.975) drops[i] = 0;
+        if (y > window.innerHeight && Math.random() > 0.972) drops[i] = 0;
         drops[i]++;
       }
 
-      // adapt if screen size changes significantly
       const newCols = Math.floor(window.innerWidth / fontSize);
       if (newCols !== columns) {
         columns = newCols;
@@ -296,44 +73,211 @@
     tick();
   }
 
-  // ====== Shortcuts UI (preview) ======
-  function initShortcuts() {
-    document.querySelectorAll('.tile').forEach(b => {
-      b.addEventListener('click', () => {
-        toastMsg(`${b.dataset.name}: (preview only)`);
-      });
-    });
+  function loadEntries() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      entries = raw ? JSON.parse(raw) : [];
+    } catch {
+      entries = [];
+    }
   }
 
-  // ====== Init ======
-  function init() {
-    startMatrix();
+  function saveEntries() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  }
 
-    setOnlineUI(navigator.onLine);
-    updateConnUI();
+  function setToast(message) {
+    toast.textContent = message;
+  }
 
-    window.addEventListener('online', () => { setOnlineUI(true); updateConnUI(); });
-    window.addEventListener('offline', () => { setOnlineUI(false); updateConnUI(); });
+  function setUpdatedStamp() {
+    const last = entries[0]?.updatedAt || entries[0]?.createdAt;
+    if (!last) {
+      updatedStamp.textContent = 'Last updated: —';
+      return;
+    }
+    const date = new Date(last);
+    updatedStamp.textContent = `Last updated: ${date.toLocaleString()}`;
+  }
 
-    if (navigator.connection) {
-      navigator.connection.onchange = updateConnUI;
+  function resetForm() {
+    entryForm.reset();
+    editingId = null;
+    $('btnSave').textContent = 'SAVE NUMBER';
+    $('btnSave').innerHTML = 'SAVE NUMBER<span class="btnSub">stored locally</span>';
+  }
+
+  function setFilter(filter) {
+    activeFilter = filter;
+    filterButtons.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    renderEntries();
+  }
+
+  function renderEntries() {
+    const filtered = activeFilter === 'public'
+      ? entries.filter(entry => entry.isPublic)
+      : entries;
+
+    countLabel.textContent = `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} saved`;
+
+    entryList.innerHTML = filtered.map(entry => {
+      const label = entry.label ? `<span class="tag">${entry.label}</span>` : '<span class="tag">No label</span>';
+      const notes = entry.notes ? `<div class="cardNotes">${entry.notes}</div>` : '';
+      const publicTag = entry.isPublic ? '<span class="tag">Public</span>' : '<span class="tag">Private</span>';
+      return `
+        <div class="card" data-id="${entry.id}">
+          <div class="cardTop">
+            <div class="cardName">${entry.name}</div>
+            <div class="tag">${publicTag}</div>
+          </div>
+          <div class="cardPhone">${entry.phone}</div>
+          <div class="cardTop">
+            ${label}
+            <span class="tag">${new Date(entry.updatedAt || entry.createdAt).toLocaleDateString()}</span>
+          </div>
+          ${notes}
+          <div class="cardActions">
+            <button class="linkBtn" data-action="edit">Edit</button>
+            <button class="linkBtn dim" data-action="delete">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    if (!filtered.length) {
+      entryList.innerHTML = '<div class="card"><div class="cardName">No entries yet.</div><div class="cardNotes">Add a contact to get started.</div></div>';
+    }
+  }
+
+  function renderPublicBoard() {
+    const publicEntries = entries.filter(entry => entry.isPublic);
+    publicChip.textContent = `public: ${publicEntries.length}`;
+
+    publicBoard.innerHTML = publicEntries.map(entry => {
+      const notes = entry.notes ? `<div class="cardNotes">${entry.notes}</div>` : '';
+      return `
+        <div class="publicCard">
+          <div class="cardName">${entry.name}</div>
+          <div class="cardPhone">${entry.phone}</div>
+          ${entry.label ? `<div class="tag">${entry.label}</div>` : ''}
+          ${notes}
+        </div>
+      `;
+    }).join('');
+
+    if (!publicEntries.length) {
+      publicBoard.innerHTML = '<div class="publicCard"><div class="cardName">No public numbers yet.</div><div class="cardNotes">Enable “Show on public access board” to display a contact here.</div></div>';
     }
 
-    btnQuick.addEventListener('click', () => runTest('quick'));
-    btnDeep.addEventListener('click', () => runTest('deep'));
-    btnStop.addEventListener('click', stopNow);
-    btnClear.addEventListener('click', clearAll);
+    const exportText = publicEntries.map(entry => {
+      const label = entry.label ? ` (${entry.label})` : '';
+      const notes = entry.notes ? ` — ${entry.notes}` : '';
+      return `${entry.name}: ${entry.phone}${label}${notes}`;
+    }).join('\n');
 
-    initShortcuts();
+    publicExport.value = exportText || 'No public entries to share.';
+  }
 
-    // Remote-friendly focus
-    setTimeout(() => btnQuick.focus(), 250);
+  function upsertEntry(data) {
+    if (editingId) {
+      entries = entries.map(entry => entry.id === editingId ? { ...entry, ...data, updatedAt: Date.now() } : entry);
+      setToast('Entry updated.');
+    } else {
+      const newEntry = { id: Date.now().toString(), ...data, createdAt: Date.now() };
+      entries = [newEntry, ...entries];
+      setToast('Entry saved.');
+    }
+    saveEntries();
+    renderEntries();
+    renderPublicBoard();
+    setUpdatedStamp();
+    resetForm();
+  }
 
-    statusEl.textContent = 'Idle';
-    setBar(0, 'Idle');
-    toastMsg('Ready. Run Quick or Deep.');
+  function handleEdit(id) {
+    const entry = entries.find(item => item.id === id);
+    if (!entry) return;
+    editingId = id;
+    nameInput.value = entry.name;
+    phoneInput.value = entry.phone;
+    labelInput.value = entry.label || '';
+    notesInput.value = entry.notes || '';
+    isPublicInput.checked = entry.isPublic;
+    $('btnSave').innerHTML = 'UPDATE NUMBER<span class="btnSub">save changes</span>';
+    setToast('Editing entry. Make updates then save.');
+    nameInput.focus();
+  }
+
+  function handleDelete(id) {
+    entries = entries.filter(entry => entry.id !== id);
+    saveEntries();
+    renderEntries();
+    renderPublicBoard();
+    setUpdatedStamp();
+    setToast('Entry removed.');
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    const data = {
+      name: nameInput.value.trim(),
+      phone: phoneInput.value.trim(),
+      label: labelInput.value.trim(),
+      notes: notesInput.value.trim(),
+      isPublic: isPublicInput.checked
+    };
+
+    if (!data.name || !data.phone) {
+      setToast('Name and phone are required.');
+      return;
+    }
+
+    upsertEntry(data);
+  }
+
+  function handleCopy() {
+    publicExport.select();
+    document.execCommand('copy');
+    setToast('Public list copied to clipboard.');
+  }
+
+  function attachEvents() {
+    entryForm.addEventListener('submit', handleSubmit);
+    btnReset.addEventListener('click', () => {
+      resetForm();
+      setToast('Form cleared.');
+    });
+
+    entryList.addEventListener('click', (event) => {
+      const action = event.target.dataset.action;
+      if (!action) return;
+      const card = event.target.closest('.card');
+      if (!card) return;
+      const id = card.dataset.id;
+      if (action === 'edit') handleEdit(id);
+      if (action === 'delete') handleDelete(id);
+    });
+
+    filterButtons.forEach(btn => {
+      btn.addEventListener('click', () => setFilter(btn.dataset.filter));
+    });
+
+    btnCopy.addEventListener('click', handleCopy);
+  }
+
+  function init() {
+    startMatrix();
+    loadEntries();
+    renderEntries();
+    renderPublicBoard();
+    setUpdatedStamp();
+    setToast('Ready to save your public access list.');
+    attachEvents();
+    subLine.textContent = 'Store numbers for public access if your phone is lost.';
   }
 
   document.addEventListener('deviceready', init, false);
-  if (!window.cordova) init(); // browser preview
+  if (!window.cordova) init();
 })();
