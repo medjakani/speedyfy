@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Network Utility</title>
+  <title>Speedyfy Network Utility</title>
   <link rel="stylesheet" href="css/app.css" />
 </head>
 
@@ -14,14 +14,18 @@
   <div class="wrap">
     <header class="top">
       <div class="brand">
-        <div class="badge">NET • UTILITY</div>
-        <div class="title">NETWORK DIAGNOSTICS</div>
+        <div class="badge">SPEEDYFY • TV</div>
+        <div class="title">NETWORK SPEED CENTER</div>
         <div class="sub" id="subLine">Ready</div>
+        <div class="headline">
+          Big-screen friendly diagnostics for fast, reliable streaming.
+        </div>
       </div>
 
       <div class="topRight">
         <div class="chip" id="onlineChip">ONLINE</div>
         <div class="chip dim" id="connChip">conn: —</div>
+        <div class="chip dim" id="timeChip">local: —</div>
       </div>
     </header>
 
@@ -30,7 +34,7 @@
         <div class="box">
           <div class="boxTitle">SPEED TEST</div>
           <div class="boxHint">
-            Measures real download speed by downloading a test file. If a server blocks requests, it will auto-fallback.
+            Measures real download speed by fetching a live test file. Deep mode averages multiple runs for stability.
           </div>
 
           <div class="controls">
@@ -60,6 +64,10 @@
               <div class="value big"><span id="dl">—</span> <span class="unit">Mbps</span></div>
             </div>
             <div class="meterRow">
+              <div class="label">Quality</div>
+              <div class="value"><span id="quality">—</span></div>
+            </div>
+            <div class="meterRow">
               <div class="label">Status</div>
               <div class="value"><span id="status">Idle</span></div>
             </div>
@@ -81,6 +89,9 @@
           </div>
 
           <div class="results" id="results"></div>
+          <div class="tipRow">
+            Tip: For the most accurate results, stop streaming while testing.
+          </div>
         </div>
       </section>
 
@@ -127,6 +138,10 @@
               <button class="tile" data-name="Display" type="button">Display</button>
               <button class="tile" data-name="Apps" type="button">Apps</button>
               <button class="tile" data-name="About" type="button">About</button>
+            </div>
+            <div class="ctaCard">
+              <div class="ctaTitle">Streaming Ready</div>
+              <div class="ctaBody">Aim for 25+ Mbps for smooth 4K playback.</div>
             </div>
           </div>
         </div>

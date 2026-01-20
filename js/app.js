@@ -5,10 +5,12 @@
   const subLine = $('subLine');
   const onlineChip = $('onlineChip');
   const connChip = $('connChip');
+  const timeChip = $('timeChip');
 
   const latencyEl = $('latency');
   const dlEl = $('dl');
   const statusEl = $('status');
+  const qualityEl = $('quality');
   const barFill = $('barFill');
   const barText = $('barText');
   const endpointEl = $('endpoint');
@@ -25,12 +27,10 @@
   // Some servers block WebView fetch (403/CORS). We try multiple.
   const ENDPOINTS = {
     quick: [
-      { name: 'TransIP 10MB', url: 'https://speed.transip.nl/10mb.bin', mbHint: 10 },
-      { name: 'nforce 10MB', url: 'https://mirror.nforce.com/pub/speedtests/10mb.bin', mbHint: 10 }
+      { name: 'Speedyfy 10MB', url: 'https://mydailyspins.com/speedyfy/10MB.bin', mbHint: 10, passes: 1 }
     ],
     deep: [
-      { name: 'nforce 50MB', url: 'https://mirror.nforce.com/pub/speedtests/50mb.bin', mbHint: 50 },
-      { name: 'TransIP 10MB (fallback)', url: 'https://speed.transip.nl/10mb.bin', mbHint: 10 }
+      { name: 'Speedyfy 10MB x5', url: 'https://mydailyspins.com/speedyfy/10MB.bin', mbHint: 10, passes: 5 }
     ]
   };
 
@@ -82,6 +82,12 @@
     $('iUA').textContent = navigator.userAgent || '—';
   }
 
+  function updateClock() {
+    const now = new Date();
+    const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    timeChip.textContent = `local: ${time}`;
+  }
+
   function renderResults() {
     resultsEl.innerHTML = runs.slice().reverse().slice(0, 6).map(r => {
       const t = new Date(r.when).toLocaleTimeString();
@@ -93,6 +99,14 @@
         </div>
       `;
     }).join('');
+  }
+
+  function getQualityLabel(mbps) {
+    if (!Number.isFinite(mbps)) return '—';
+    if (mbps >= 25) return 'Excellent (4K Ready)';
+    if (mbps >= 10) return 'Great (HD Ready)';
+    if (mbps >= 5) return 'Fair (SD/HD Mixed)';
+    return 'Poor (Buffering Risk)';
   }
 
   // ====== Real measurement ======
@@ -125,21 +139,24 @@
   }
 
   // Download speed: download whole file and compute Mbps.
-  async function measureDownloadMbps(urlBase) {
-    const cb = `cb=${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const url = urlBase.includes('?') ? `${urlBase}&${cb}` : `${urlBase}?${cb}`;
-
+  async function measureDownloadMbps(urlBase, passes = 1, onProgress) {
+    let totalBytes = 0;
     const t0 = performance.now();
-    const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: abortCtrl.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // Read the full body to truly download
-    const buf = await res.arrayBuffer();
+    for (let i = 0; i < passes; i += 1) {
+      const cb = `cb=${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const url = urlBase.includes('?') ? `${urlBase}&${cb}` : `${urlBase}?${cb}`;
+      onProgress?.(i + 1, passes);
+
+      const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: abortCtrl.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      totalBytes += (buf.byteLength || 0);
+    }
 
     const t1 = performance.now();
     const seconds = (t1 - t0) / 1000;
-    const bytes = buf.byteLength || 1;
-
+    const bytes = totalBytes || 1;
     const mbps = (bytes * 8 / (1024 * 1024)) / seconds;
     return { mbps, seconds, bytes };
   }
@@ -156,6 +173,7 @@
 
     latencyEl.textContent = '—';
     dlEl.textContent = '—';
+    qualityEl.textContent = '—';
     statusEl.textContent = 'Starting…';
     endpointEl.textContent = 'auto';
     setBar(0, 'Initializing…');
@@ -179,11 +197,20 @@
           statusEl.textContent = 'Downloading…';
           setBar(35, `Downloading: ${ep.name}`);
 
-          const { mbps, seconds, bytes } = await measureDownloadMbps(ep.url);
+          const { mbps, seconds, bytes } = await measureDownloadMbps(
+            ep.url,
+            ep.passes ?? 1,
+            (pass, total) => {
+              const pct = 35 + ((pass - 1) / total) * 55;
+              setBar(pct, `Downloading ${pass}/${total}: ${ep.name}`);
+              statusEl.textContent = `Downloading (${pass}/${total})…`;
+            }
+          );
 
           // show result
           dlEl.textContent = fmt(mbps, 1);
           statusEl.textContent = 'Done';
+          qualityEl.textContent = getQualityLabel(mbps);
           setBar(100, 'Completed');
 
           const mb = Math.round(bytes / (1024 * 1024));
@@ -242,6 +269,7 @@
     renderResults();
     latencyEl.textContent = '—';
     dlEl.textContent = '—';
+    qualityEl.textContent = '—';
     statusEl.textContent = 'Idle';
     endpointEl.textContent = 'auto';
     setBar(0, 'Idle');
@@ -311,6 +339,8 @@
 
     setOnlineUI(navigator.onLine);
     updateConnUI();
+    updateClock();
+    setInterval(updateClock, 15000);
 
     window.addEventListener('online', () => { setOnlineUI(true); updateConnUI(); });
     window.addEventListener('offline', () => { setOnlineUI(false); updateConnUI(); });
@@ -330,6 +360,7 @@
     setTimeout(() => btnQuick.focus(), 250);
 
     statusEl.textContent = 'Idle';
+    qualityEl.textContent = '—';
     setBar(0, 'Idle');
     toastMsg('Ready. Run Quick or Deep.');
   }
